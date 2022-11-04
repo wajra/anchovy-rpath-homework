@@ -1,0 +1,292 @@
+---
+title: "Ancovy_Bay_HW"
+output: html_document
+date: "2022-10-31"
+---
+
+# Load packages
+```{r}
+pacman::p_load("tidyverse","Rpath","here")
+```
+# Try out Rsim
+## Example to run simulation with Rpath
+Based off the vignette: https://github.com/NOAA-EDAB/Rpath/blob/master/vignettes/Rsim.Rmd
+
+To run the MSEs I used the balanced model that Sean set up:
+```{r}
+source(here::here("data-raw/Ancovy_Bay_balanced.R"))
+```
+
+Set up basic simulation using Rpath model and estimated parameters
+```{r}
+ABsim <- rsim.scenario(AB, AB.params, years = 1:100) # Convert parameters to rates
+```
+
+Double sealers effort after 25 years
+```{r}
+ABsim_sealer <- adjust.fishing(ABsim, parameter = "ForcedEffort", group = 'sealers', sim.year = 25:100, value = 2)
+```
+
+Run modified simulation scenario
+```{r}
+ABsim_sealerRun <- rsim.run(ABsim_sealer, method = "RK4", years = 1:100)
+```
+Plot results
+```{r}
+rsim.plot(ABsim_sealerRun)
+```
+
+## Double MzeroMort setting for seals
+Try adjust.scenario function Double the parameter for seals?
+```{r}
+ABsim_MzeroMort <- adjust.scenario(ABsim, parameter = 'MzeroMort', group = "seals", value = 2)
+```
+Run modified simulation scenario
+```{r}
+ABsim_MzeroMortRun <- rsim.run(ABsim_MzeroMort, method = "RK4", years = 1:100)
+```
+Plot results
+```{r}
+rsim.plot(ABsim_MzeroMortRun)
+```
+
+
+## Double the cod natural mortality
+Try the adjust.forcing function, double cod mortality beginning year 25
+```{r}
+ABsim_codM <- adjust.forcing(ABsim, parameter = 'ForcedMort', 
+               group = "cod", 
+               value = 2, # Double
+               sim.year = 25:100, # Change impacts years 25-100
+               sim.month = 0) # All months impacted 
+               
+```
+
+Run modified simulation scenario
+```{r}
+ABsim_codMRun <- rsim.run(ABsim_codM, method = "RK4", years = 1:100)
+```
+Plot results
+```{r}
+rsim.plot(ABsim_codMRun)
+```
+
+
+
+# Set up a full MSE loop
+1) Set up initial scenario (same as line 16 above)
+```{r}
+ABsim <- rsim.scenario(AB, AB.params, years = 1:100) # Convert parameters to rates
+```
+
+2) Initialize simulation for first 25 years and full simulation
+```{r}
+AB.init <- rsim.run(ABsim, method = "AB", years = 1:25)
+AB.full <- copy(AB.init)
+```
+3) Set up HCR
+```{r}
+# Get reference point by turning off fishing
+gear <- AB.params$model[Type==3, Group]
+for(igear in 1:length(gear)){
+  AB.base <- adjust.fishing(ABsim, parameter = "ForcedEffort", group=gear[igear], value = 0, sim.year = 0:100)
+}
+AB.b0 <- rsim.run(AB.base, method = "RK4", 1:25)
+# Cod B0 value
+cod <- extract.node(AB.b0, 'cod') 
+cod.b0 <- max(cod$Biomass)
+# Cod ref pt = 1/2 B0
+cod.ref <- 0.5*cod.b0 # I think this value is too high so cod get fished to extinction at the cod.ref
+cod.ref=0.2
+# Actually make function to modify effort of the Rsim scenario object
+bio.rule <- function(Rsim.scenario, Rsim.run, group, gear, ref.point, year){
+  group.num <- which(Rsim.scenario$params$spname == group)
+  gear.num <- which(Rsim.scenario$params$spname == gear) - Rsim.scenario$params$NUM_BIO
+  current.effort <- Rsim.scenario$fishing$ForcedEffort[(year-1)*12+1, gear.num]
+  if(Rsim.run$end_state$Biomass[group.num] > ref.point){ # If below ref pt increase effort
+    Rsim.scenario <- adjust.fishing(Rsim.scenario, 'ForcedEffort', group=gear, sim.year = year+1, value = current.effort*1.05)
+  }
+  if(Rsim.run$end_state$Biomass[group.num] < ref.point){ # If above ref pt reduce effort
+    Rsim.scenario <- adjust.fishing(Rsim.scenario, 'ForcedEffort', group = gear, sim.year = year + 1, value = current.effort*0.75)
+  }
+  
+  return(Rsim.scenario)
+}
+```
+
+4) Run full MSE loop
+```{r}
+for(iyr in 25:99){ # Simulate years 26 through 100
+  # HCR
+  ABsim <- bio.rule(Rsim.scenario = ABsim, Rsim.run = AB.full, group='cod', gear='trawlers', ref.point=cod.ref, year=iyr)
+  # Step forward
+  AB.full <- rsim.step(ABsim, AB.full, method = "AB", year.end = iyr+1)
+}
+```
+
+Plot results
+```{r}
+# All nodes
+rsim.plot(AB.full)
+# Only cod node
+cod <- extract.node(AB.full, 'cod')
+plot(cod$Biomass, xlab = "Month", ylab = "Biomass")
+abline(h=cod.ref) # add ref pt
+```
+
+
+
+
+
+# Scenarios setup for HW
+## Seals decline and management stays the same
+Initial scenario
+```{r}
+ABsim <- rsim.scenario(AB, AB.params, years = 1:25) # Convert parameters to rates
+```
+Increase seal mortality by 50%  starting in year 2
+```{r}
+ABsim_sealMort <- adjust.forcing(ABsim, parameter = "ForcedMort", group = 'seals', sim.year = 2:25, value = 1.5)
+```
+Run modified simulation scenario
+```{r}
+ABsim_sealMortRun <- rsim.run(ABsim_sealMort, method = "RK4", years = 1:25)
+```
+Plot results
+```{r}
+# Plot all
+rsim.plot(ABsim_sealMortRun)
+# Plot fish
+rsim.plot(ABsim_sealMortRun, spname = c("cod", "whiting", "mackerel", "anchovy", "shrimp"))
+# Plot only seals and cod
+rsim.plot(ABsim_sealMortRun, spname = c("seals", "cod"))
+species <- c('whales', 'seals', 'cod', 'whiting','mackerel', 'anchovy', 'shrimp', 'benthos', 'zooplankton', 'phytoplankton', 'detritus')
+spBiomass <- NULL
+for(isp in species){
+  stock <- extract.node(ABsim_sealMortRun, isp)
+  spBiomass <- cbind(spBiomass, stock$Biomass)
+}
+colnames(spBiomass) <- species
+Month <- c(1:(12*100))
+spBiomass <- cbind(spBiomass, Month)
+spBiomass <- spBiomass %>% 
+  as.data.frame() %>% 
+  pivot_longer(cols = all_of(species), names_to = "Species", values_to = "Biomass")
+spBiomass %>% # filter(Species == 'whales') %>%
+  ggplot() +
+  geom_line(aes(x= Month, y = Biomass, col=Species)) +
+  facet_wrap(~ Species, nrow = 3)
+cod <- extract.node(ABsim_sealMortRun, 'cod')
+plot(cod$Biomass, xlab = "Month", ylab = "Biomass")
+abline(h=cod.ref) # add ref pt
+```
+
+
+## Seals decline starting in year 2 years and sealers harvest cut in half five years later (year 7)
+```{r}
+ABsim_sealMort <- adjust.forcing(ABsim, parameter = "ForcedMort", group = 'seals', sim.year = 2:25, value = 1.5)
+ABsim_sealMortFish <- adjust.fishing(ABsim_sealMort, parameter = "ForcedEffort", group = 'sealers', sim.year = 7:25, value = 0.5)
+```
+Run modified simulation scenario
+```{r}
+ABsim_sealMortFishRun <- rsim.run(ABsim_sealMortFish, method = "RK4", years = 1:25)
+```
+Plot results
+```{r}
+rsim.plot(ABsim_sealMortFishRun)
+# Plot all species
+rsim.plot(ABsim_sealMortFishRun)
+# Plot fish
+rsim.plot(ABsim_sealMortFishRun, spname = c("cod", "whiting", "mackerel", "anchovy", "shrimp"))
+# Plot only seals and cod
+rsim.plot(ABsim_sealMortFishRun, spname = c("seals", "cod"))
+```
+
+
+## Seals starting in year 2 and sealers harvest cut in half five years later (year 7) but seals are a strong top-down predator (3x the predation pressure of the base case)
+```{r}
+ABsim_sealMort <- adjust.forcing(ABsim, parameter = "ForcedMort", group = 'seals', sim.year = 2:25, value = 1.5)
+ABsim_sealMortTopDown <- adjust.forcing(ABsim_sealMort, parameter = 'ForcedPrey', group = 'seals', sim.year = 1:25, value = 3) # top-down predator specified for entire scenario
+ABsim_sealMortTopDownFish <- adjust.fishing(ABsim_sealMortTopDown, parameter = "ForcedEffort", group = 'sealers', sim.year = 7:25, value = 0.5)
+```
+Run modified simulation scenario
+```{r}
+ABsim_sealMortTopDownFishRun <- rsim.run(ABsim_sealMortTopDownFish, method = "RK4", years = 1:25)
+```
+Plot results
+```{r}
+# Plot all species
+rsim.plot(ABsim_sealMortTopDownFishRun)
+# Plot fish
+rsim.plot(ABsim_sealMortTopDownFishRun, spname = c("cod", "whiting", "mackerel", "anchovy", "shrimp"))
+# Plot only seals and cod
+rsim.plot(ABsim_sealMortTopDownFishRun, spname = c("seals", "cod"))
+```
+
+
+## Seals starting in year 2 and sealers harvest is NOT ADJUSTED seals are a strong top-down predator (3x the predation pressure of the base case)
+```{r}
+ABsim_sealMort <- adjust.forcing(ABsim, parameter = "ForcedMort", group = 'seals', sim.year = 2:25, value = 1.5)
+ABsim_sealMortTopDown <- adjust.forcing(ABsim_sealMort, parameter = 'ForcedPrey', group = 'seals', sim.year = 1:25, value = 3) # top-down predator specified for entire scenario
+```
+Run modified simulation scenario
+```{r}
+ABsim_sealMortTopDownRun <- rsim.run(ABsim_sealMortTopDown, method = "RK4", years = 1:25)
+```
+Plot results
+```{r}
+# Plot all species
+rsim.plot(ABsim_sealMortTopDownRun)
+# Plot fish
+rsim.plot(ABsim_sealMortTopDownRun, spname = c("cod", "whiting", "mackerel", "anchovy", "shrimp"))
+# Plot only seals and cod
+rsim.plot(ABsim_sealMortTopDownRun, spname = c("seals", "cod"))
+```
+
+# Calculating economic value after each simulation
+
+Assuming that cod sells for \$3/pound, mackerel \$2/pound, whiting \$1/pound, shrimp \$4/pound, and anchovies \$0.50/pound
+
+```{r}
+
+# List of fish
+fish_species <- c('cod', 'whiting','mackerel', 'anchovy', 'shrimp')
+# List of fish prices per pound
+fish_value <- c(3,1,2,0.5,4)
+
+# First get the catches and convert them to pounds
+AB.full.catches <- AB.full$annual_Catch[,4:8]*2000
+
+# Number of years in the simulation
+years <- 100
+# Number of species. Both of these are for the loop
+species <- 5
+
+
+fish_prices <- array(rep(NA,years*species),dim=c(years, species))
+
+for (y in seq(1,years)){
+  for (i in seq(1,species)){
+    # print(paste(fish_species[i],AB.full.catches[y,i],"value is",AB.full.catches[y,i]*fish_value[i]))
+    fish_prices[y,i] <- AB.full.catches[y,i]*fish_value[i]
+  }
+}
+
+print(paste("Total cod revenue through 100 years: USD",sum(fish_prices[,1])))
+
+total_fish_revenue_over_years <- c()
+for (fish in seq(1,5)){
+  total_fish_revenue_over_years <- append(total_fish_revenue_over_years,sum(fish_prices[,fish]))
+}
+
+fish_df <- data.frame(fish_type=fish_species, fish_value=total_fish_revenue_over_years)
+
+
+png(here("plots","total_fishing_revenue_over_100_years.png"),units='in', height=5, width=7, res=300)
+ggplot(fish_df, aes(x=fish_type, y=fish_value)) + geom_bar(stat="identity") + xlab("Total Revenue ($) over 100 years") +
+  ylab("Species")
+dev.off()
+
+
+print(paste("Total revenue over 100 years from all 5 species: USD ",sum(fish_prices)))
+```

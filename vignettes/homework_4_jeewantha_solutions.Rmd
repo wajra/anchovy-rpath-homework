@@ -1,0 +1,47 @@
+---
+title: "Anchovy Bay Homework #4 - Jeewantha "
+output: html_document
+date: "2022-10-31"
+---
+
+# Load packages
+```{r}
+pacman::p_load("tidyverse","Rpath")
+```
+# Try out Rsim
+## Example to run simulation with Rpath
+Based off the vignette: https://github.com/NOAA-EDAB/Rpath/blob/master/vignettes/Rsim.Rmd
+
+To run the MSEs I used the balanced model that Sean set up:
+```{r}
+source(here::here("data-raw/Ancovy_Bay_balanced.R"))
+```
+
+Set up basic simulation using Rpath model and estimated parameters
+```{r}
+ABsim <- rsim.scenario(AB, AB.params, years = 1:100) # Convert parameters to rates
+```
+
+Let's see how the simulation is set up at this point
+
+```{r}
+
+ABsim_cod_top <- adjust.forcing(ABsim, parameter = 'ForcedPrey', group = 'cod', sim.year = 1:100, value = 2) # top-down predator specified for entire scenario
+# Run the scenario
+ABsim_cod_top_run <- rsim.run(ABsim_cod_top, method = "RK4", years = 1:100)
+# Plot it
+png(here("plots","cod_top_predator_run.png"),units='in', height=5, width=7, res=300)
+rsim.plot(ABsim_cod_top_run)
+dev.off()
+```
+Increasing Whiting Consumption rate
+
+```{r}
+ABsim_whiting <- adjust.scenario(ABsim, parameter = 'QB', group = 'whiting', value = 6.60) # Whiting consumption doubled (From 3.30 to 6.60)
+# Run the scenario
+ABsim_whiting_run <- rsim.run(ABsim_whiting, method = "RK4", years = 1:100)
+# Plot it
+png(here("plots","whiting_consumption_run.png"),units='in', height=5, width=7, res=300)
+rsim.plot(ABsim_whiting_run)
+dev.off()
+```

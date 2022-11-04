@@ -283,7 +283,7 @@ fish_df <- data.frame(fish_type=fish_species, fish_value=total_fish_revenue_over
 
 
 png(here("plots","total_fishing_revenue_over_100_years.png"),units='in', height=5, width=7, res=300)
-ggplot(fish_df, aes(x=fish_type, y=fish_value)) + geom_bar(stat="identity") + xlab("Total Revenue ($) over 100 years") +
+ggplot(fish_df, aes(x=fish_type, y=fish_value)) + geom_bar(stat="identity") + xlab("Total Revenue (USD per km-2yr-1) over 100 years") +
   ylab("Species")
 dev.off()
 
